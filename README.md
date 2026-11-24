@@ -22,13 +22,15 @@
 
 ### Автоматическая установка
 
-На чистом Debian или Ubuntu достаточно клонировать репозиторий и запустить установщик:
+Репозиторий приватный, поэтому сначала добавьте SSH-ключ VPS в GitHub как deploy key с правом чтения. После этого на чистом Debian или Ubuntu достаточно выполнить:
 
 ```bash
-git clone https://github.com/mirowin/simple-sync-obsidian.git
+git clone git@github.com:mirowin/simple-sync-obsidian.git
 cd simple-sync-obsidian
 sudo ./scripts/install-vps.sh --domain sync.example.com
 ```
+
+Если на VPS уже настроен GitHub CLI, вместо SSH можно использовать `gh repo clone mirowin/simple-sync-obsidian`.
 
 Скрипт:
 
