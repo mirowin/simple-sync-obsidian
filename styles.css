@@ -1,0 +1,16 @@
+.simple-sync-code textarea {
+  min-height: 7rem;
+  font-family: var(--font-monospace);
+  font-size: var(--font-smallest);
+}
+
+.simple-sync-status {
+  margin: 0.75rem 0;
+  padding: 0.75rem;
+  border-radius: var(--radius-s);
+  background: var(--background-secondary);
+}
+
+.simple-sync-danger {
+  color: var(--text-error);
+}

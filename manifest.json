@@ -1,0 +1,9 @@
+{
+  "id": "simple-encrypted-sync",
+  "name": "Simple Encrypted Sync",
+  "version": "0.1.0",
+  "minAppVersion": "1.5.0",
+  "description": "Простая сквозная зашифрованная синхронизация Obsidian между телефоном и компьютером.",
+  "author": "Nikita Shitikov",
+  "isDesktopOnly": false
+}
