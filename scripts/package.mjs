@@ -14,6 +14,11 @@ for (const file of ["manifest.json", "styles.css"]) await cp(resolve(root, file)
 await cp(resolve(root, "dist/main.js"), resolve(pluginDir, "main.js"));
 for (const file of ["docker-compose.yml", "Caddyfile", ".env.example", "README.md"]) await cp(resolve(root, file), resolve(serverDir, file));
 await cp(resolve(root, "server"), resolve(serverDir, "server"), { recursive: true, filter: source => !source.includes("node_modules") && !source.endsWith("server.test.mjs") });
+await cp(resolve(root, "deploy"), resolve(serverDir, "deploy"), { recursive: true });
+await mkdir(resolve(serverDir, "scripts"), { recursive: true });
+for (const file of ["install-vps.sh", "configure-vps.sh", "bootstrap-vps.sh"]) {
+  await cp(resolve(root, "scripts", file), resolve(serverDir, "scripts", file));
+}
 
 for (const archive of ["simple-encrypted-sync-plugin-0.1.0.zip", "simple-encrypted-sync-server-0.1.0.zip"]) {
   await rm(resolve(release, archive), { force: true });

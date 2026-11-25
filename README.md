@@ -18,26 +18,38 @@
 
 ## 1. Развёртывание сервера на VPS
 
-Нужен домен или поддомен, A-запись которого указывает на IP вашего VPS. На сервере должны быть установлены Docker и Docker Compose, а порты 80 и 443 должны быть открыты.
+Сервер синхронизации и просмотрщик используют один настраиваемый порт. По умолчанию установщик выбирает первый свободный порт начиная с `18787` и привязывает его к `127.0.0.1`, не занимая 80/443 и не конфликтуя с уже установленным Nginx или Caddy.
 
-### Автоматическая установка
+### Установка одной командой
 
-Репозиторий приватный, поэтому сначала добавьте SSH-ключ VPS в GitHub как deploy key с правом чтения. После этого на чистом Debian или Ubuntu достаточно выполнить:
+Если репозиторий публичный:
 
 ```bash
-git clone git@github.com:mirowin/simple-sync-obsidian.git
-cd simple-sync-obsidian
-sudo ./scripts/install-vps.sh --domain sync.example.com
+curl -fsSL https://raw.githubusercontent.com/mirowin/simple-sync-obsidian/main/scripts/bootstrap-vps.sh | sudo bash -s -- --port auto
 ```
 
-Если на VPS уже настроен GitHub CLI, вместо SSH можно использовать `gh repo clone mirowin/simple-sync-obsidian`.
+Свой порт можно указать сразу:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mirowin/simple-sync-obsidian/main/scripts/bootstrap-vps.sh | sudo bash -s -- --port 19432
+```
+
+Сейчас репозиторий приватный. Для установки нужен GitHub token только с правом чтения содержимого репозитория:
+
+```bash
+read -rsp "GitHub token: " GITHUB_TOKEN && export GITHUB_TOKEN
+curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw+json" \
+  "https://api.github.com/repos/mirowin/simple-sync-obsidian/contents/scripts/bootstrap-vps.sh?ref=main" \
+  | sudo -E bash -s -- --port auto
+unset GITHUB_TOKEN
+```
 
 Скрипт:
 
 - установит Docker Engine и Docker Compose из официального репозитория, если их ещё нет;
 - скопирует сервер в `/opt/simple-sync-obsidian`;
-- настроит Caddy и автоматический HTTPS;
-- откроет порты 80/443 в UFW, если UFW уже активен;
+- выберет свободный нестандартный порт или использует переданный через `--port`;
+- сохранит настройки в `/etc/simple-sync-obsidian/config.env`;
 - создаст `simple-sync-obsidian.service`;
 - включит автозапуск после перезагрузки VPS;
 - поднимет контейнеры и проверит `/health`.
@@ -52,30 +64,50 @@ sudo systemctl restart simple-sync-obsidian
 sudo journalctl -u simple-sync-obsidian -f
 ```
 
-### Ручная установка
+### Изменение порта после установки
 
-1. Скопируйте на VPS серверный архив и распакуйте его.
-2. В каталоге создайте `.env` по примеру `.env.example`:
+Посмотреть текущие настройки:
 
-   ```env
-   SYNC_DOMAIN=sync.example.com
-   ```
+```bash
+simple-sync-config --show
+```
 
-3. Запустите:
+Изменить порт с проверкой занятости и автоматическим перезапуском:
 
-   ```bash
-   docker compose up -d --build
-   ```
+```bash
+sudo simple-sync-config --port 19432
+```
 
-4. Проверьте:
+Также можно изменить `/etc/simple-sync-obsidian/config.env` вручную и выполнить:
 
-   ```bash
-   curl https://sync.example.com/health
-   ```
+```bash
+sudo systemctl restart simple-sync-obsidian
+```
 
-   Ожидаемый ответ: `{"status":"ok"}`.
+### Подключение к существующему HTTPS reverse proxy
 
-Caddy автоматически получает и обновляет HTTPS-сертификат. Данные сохраняются в Docker volume `sync_data` и не исчезают при обновлении контейнера.
+По умолчанию порт доступен только локально. Для Caddy достаточно добавить:
+
+```caddyfile
+sync.example.com {
+    reverse_proxy 127.0.0.1:18787
+}
+```
+
+Если при установке выбран другой порт, замените `18787` в конфигурации reverse proxy.
+
+Для Nginx готов пример `deploy/nginx.conf.example`. После настройки reverse proxy в плагине указывается `https://sync.example.com`.
+
+Если reverse proxy не нужен, сервер можно открыть напрямую, но соединение будет без TLS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/mirowin/simple-sync-obsidian/main/scripts/bootstrap-vps.sh \
+  | sudo bash -s -- --port 19432 --bind 0.0.0.0
+```
+
+В этом режиме установщик добавит выбранный порт в активный UFW. Для постоянной работы через интернет рекомендуется HTTPS reverse proxy.
+
+Данные сохраняются в Docker volume `sync_data` и не исчезают при обновлении контейнера.
 
 ### Резервная копия серверных данных
 

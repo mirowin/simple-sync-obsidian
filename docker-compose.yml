@@ -7,25 +7,8 @@ services:
       PORT: 8787
     volumes:
       - sync_data:/data
-    expose:
-      - "8787"
-
-  caddy:
-    image: caddy:2.10-alpine
-    restart: unless-stopped
-    depends_on:
-      - sync
-    environment:
-      SYNC_DOMAIN: ${SYNC_DOMAIN}
     ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
+      - "${SIMPLE_SYNC_BIND:-127.0.0.1}:${SIMPLE_SYNC_PORT:-18787}:8787"
 
 volumes:
   sync_data:
-  caddy_data:
-  caddy_config:
