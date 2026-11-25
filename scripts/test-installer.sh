@@ -15,6 +15,8 @@ grep -q '\${SIMPLE_SYNC_PORT:-18787}:8787' "$ROOT_DIR/docker-compose.yml"
 ! grep -Eq '"(80|443):(80|443)"' "$ROOT_DIR/docker-compose.yml"
 grep -q 'DEFAULT_PORT=18787' "$ROOT_DIR/scripts/install-vps.sh"
 grep -q 'simple-sync-config --port' "$ROOT_DIR/scripts/install-vps.sh"
+grep -q '\$OPEN_FIREWALL || return 0' "$ROOT_DIR/scripts/install-vps.sh"
+grep -q '\[\[ "\$bind" == "0.0.0.0" \]\] || return 0' "$ROOT_DIR/scripts/install-vps.sh"
 
 echo "VPS installer checks passed"
 
