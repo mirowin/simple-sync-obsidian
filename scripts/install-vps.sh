@@ -179,12 +179,13 @@ install_service() {
 
 configure_firewall() {
   local bind="$1" port="$2"
-  $OPEN_FIREWALL || return
-  [[ "$bind" == "0.0.0.0" ]] || return
+  $OPEN_FIREWALL || return 0
+  [[ "$bind" == "0.0.0.0" ]] || return 0
   if command -v ufw >/dev/null 2>&1 && ufw status | grep -q '^Status: active'; then
     log "Открываю порт $port/tcp в UFW"
     ufw allow "$port/tcp" >/dev/null
   fi
+  return 0
 }
 
 start_and_check() {
