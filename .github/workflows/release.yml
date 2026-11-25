@@ -3,30 +3,34 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
-
-permissions:
-  contents: write
+      - "*.*.*"
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
-      - run: npm ci
-      - run: npm test
-      - run: npm run package
-      - name: Create GitHub release
+      - name: Validate and create draft plugin release
+        uses: obsidianmd/obsidian-workflows@v1
+        with:
+          mode: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build server archives
+        run: npm run package
+      - name: Attach optional installation archives
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          gh release create "$GITHUB_REF_NAME"
+          gh release upload "$GITHUB_REF_NAME"
           release/simple-encrypted-sync-plugin-*.zip
           release/simple-encrypted-sync-server-*.zip
-          --generate-notes
-          --title "Simple Encrypted Sync $GITHUB_REF_NAME"
-
+          --clobber

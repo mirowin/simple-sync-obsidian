@@ -16,13 +16,45 @@
 
 Служебная папка `.obsidian` не синхронизируется. Это специально: настройки интерфейса и наборы плагинов на телефоне и компьютере могут отличаться.
 
+## Конфиденциальность и сетевые подключения
+
+Плагин использует сеть только для подключения к адресу сервера, который пользователь самостоятельно указывает в настройках. Телеметрии, аналитики, рекламы и подключений к сторонним сервисам нет.
+
+- обычная синхронизация передаёт на самостоятельно размещённый сервер зашифрованные AES-256-GCM данные;
+- ключ шифрования остаётся на устройствах и входит в секретный код подключения;
+- имена и содержимое файлов основной синхронизируемой копии серверу недоступны;
+- заметки веб-просмотрщика передаются серверу в открытом виде только после явного добавления пути в правила публикации;
+- владелец сервера самостоятельно отвечает за его доступность, резервное копирование и сетевую безопасность.
+
+Проект распространяется по лицензии [MIT](LICENSE).
+
+## Публикация в каталоге Obsidian
+
+После завершения тестирования:
+
+1. Сделайте репозиторий публичным.
+2. Создайте и отправьте тег, точно совпадающий с версией в `manifest.json`:
+
+   ```bash
+   git tag 0.1.0
+   git push origin 0.1.0
+   ```
+
+3. GitHub Actions запустит официальный `obsidianmd/obsidian-workflows`, проверит проект правилами Community directory и создаст черновик GitHub Release с `main.js`, `manifest.json` и `styles.css`.
+4. Проверьте черновик на странице Releases и опубликуйте его.
+5. Войдите на [community.obsidian.md](https://community.obsidian.md), подключите GitHub и добавьте URL этого репозитория как новый плагин.
+
+Для локальной проверки структуры публикации используйте:
+
+```bash
+npm run validate:submission
+```
+
 ## 1. Развёртывание сервера на VPS
 
 Сервер синхронизации и просмотрщик используют один настраиваемый порт. По умолчанию установщик выбирает первый свободный порт начиная с `18787` и привязывает его к `127.0.0.1`, не занимая 80/443 и не конфликтуя с уже установленным Nginx или Caddy.
 
 ### Установка одной командой
-
-Если репозиторий публичный:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mirowin/simple-sync-obsidian/main/scripts/bootstrap-vps.sh | sudo bash -s -- --port auto
@@ -32,16 +64,6 @@ curl -fsSL https://raw.githubusercontent.com/mirowin/simple-sync-obsidian/main/s
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/mirowin/simple-sync-obsidian/main/scripts/bootstrap-vps.sh | sudo bash -s -- --port 19432
-```
-
-Сейчас репозиторий приватный. Для установки нужен GitHub token только с правом чтения содержимого репозитория:
-
-```bash
-read -rsp "GitHub token: " GITHUB_TOKEN && export GITHUB_TOKEN
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" -H "Accept: application/vnd.github.raw+json" \
-  "https://api.github.com/repos/mirowin/simple-sync-obsidian/contents/scripts/bootstrap-vps.sh?ref=main" \
-  | sudo -E bash -s -- --port auto
-unset GITHUB_TOKEN
 ```
 
 Скрипт:

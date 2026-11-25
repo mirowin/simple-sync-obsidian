@@ -20,6 +20,11 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx tsc --noEmit
+      - run: npm run validate:submission
+      - name: Obsidian community checks
+        uses: obsidianmd/obsidian-workflows@v1
+        with:
+          scanner-lint: true
 
   server:
     runs-on: ubuntu-latest
