@@ -1,4 +1,4 @@
-import { cp, mkdir, rm } from "node:fs/promises";
+import { cp, mkdir, readFile, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 
@@ -6,6 +6,10 @@ const root = resolve(import.meta.dirname, "..");
 const release = resolve(root, "release");
 const pluginDir = resolve(release, "simple-encrypted-sync");
 const serverDir = resolve(release, "simple-encrypted-sync-server");
+const manifest = JSON.parse(await readFile(resolve(root, "manifest.json"), "utf8"));
+const version = manifest.version;
+const pluginArchive = `simple-encrypted-sync-plugin-${version}.zip`;
+const serverArchive = `simple-encrypted-sync-server-${version}.zip`;
 
 await rm(release, { recursive: true, force: true });
 await mkdir(pluginDir, { recursive: true });
@@ -20,8 +24,8 @@ for (const file of ["install-vps.sh", "configure-vps.sh", "bootstrap-vps.sh"]) {
   await cp(resolve(root, "scripts", file), resolve(serverDir, "scripts", file));
 }
 
-for (const archive of ["simple-encrypted-sync-plugin-0.1.0.zip", "simple-encrypted-sync-server-0.1.0.zip"]) {
+for (const archive of [pluginArchive, serverArchive]) {
   await rm(resolve(release, archive), { force: true });
 }
-execFileSync("zip", ["-qr", "simple-encrypted-sync-plugin-0.1.0.zip", "simple-encrypted-sync"], { cwd: release });
-execFileSync("zip", ["-qr", "simple-encrypted-sync-server-0.1.0.zip", "simple-encrypted-sync-server"], { cwd: release });
+execFileSync("zip", ["-qr", pluginArchive, "simple-encrypted-sync"], { cwd: release });
+execFileSync("zip", ["-qr", serverArchive, "simple-encrypted-sync-server"], { cwd: release });

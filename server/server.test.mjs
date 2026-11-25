@@ -95,3 +95,75 @@ test("viewer enforces public, link and private path rules", async () => {
   response = await fetch(`${base}/view/${vault}/Family/Home.md?key=${encodeURIComponent(secondSecret)}`);
   assert.equal(response.status, 200);
 });
+
+test("viewer renders folder hierarchy, full-text index and Obsidian Bases without leaking private notes", async () => {
+  const vault = "viewer-bases-123";
+  await fetch(`${base}/v1/vaults/${vault}`, { method: "POST", headers: auth, body: "{}" });
+  const encode = value => Buffer.from(value).toString("base64");
+  const snapshot = {
+    format: 1,
+    siteTitle: "Money vault",
+    updatedAt: Date.now(),
+    rules: [
+      { path: "Public", mode: "public" },
+      { path: "Public/Money/Список/Секрет.md", mode: "private" }
+    ],
+    files: [
+      {
+        path: "Public/Money/Расходы.md",
+        kind: "markdown",
+        mtime: 10,
+        content: encode("# Расходы\n\n![[БД.base]]\n\nНалик 191к +40к")
+      },
+      {
+        path: "Public/Money/БД.base",
+        kind: "asset",
+        mtime: 11,
+        content: encode(`filters:\n  file.inFolder("Public/Money/Список")\nviews:\n  - type: table\n    name: Расходы\n    order:\n      - file.name\n      - amount\n      - Жене\n    summaries:\n      amount: Sum\n`)
+      },
+      {
+        path: "Public/Money/Список/Еда.md",
+        kind: "markdown",
+        mtime: 12,
+        content: encode("---\namount: 30000\nЖене: false\n---\n# Еда\nОбычная покупка продуктов")
+      },
+      {
+        path: "Public/Money/Список/Кошка.md",
+        kind: "markdown",
+        mtime: 13,
+        content: encode("---\namount: 3000\nЖене: true\n---\n# Кошка\nКорм и наполнитель")
+      },
+      {
+        path: "Public/Money/Список/Секрет.md",
+        kind: "markdown",
+        mtime: 14,
+        content: encode("---\namount: 999999\n---\n# Скрытая трата\nНЕ ДОЛЖНО ПОПАСТЬ В HTML")
+      }
+    ]
+  };
+  let response = await fetch(`${base}/v1/vaults/${vault}/publication`, {
+    method: "PUT",
+    headers: { ...auth, "Content-Type": "application/json" },
+    body: JSON.stringify(snapshot)
+  });
+  assert.equal(response.status, 200);
+
+  response = await fetch(`${base}/view/${vault}/Public/Money/Расходы.md`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /class="tree-folder"/u);
+  assert.match(html, />Money</u);
+  assert.match(html, />Список</u);
+  assert.match(html, /class="obsidian-base"/u);
+  assert.match(html, /class="base-tab active"/u);
+  assert.match(html, />30000</u);
+  assert.match(html, />3000</u);
+  assert.match(html, /Sum 33000/u);
+  assert.match(html, /обычная покупка продуктов/u);
+  assert.doesNotMatch(html, /НЕ ДОЛЖНО ПОПАСТЬ В HTML/u);
+  assert.doesNotMatch(html, /999999/u);
+
+  response = await fetch(`${base}/view/${vault}/Public/Money/БД.base`);
+  assert.equal(response.status, 200);
+  assert.match(await response.text(), /class="base-table"/u);
+});
