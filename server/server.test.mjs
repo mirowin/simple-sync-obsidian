@@ -156,6 +156,12 @@ test("viewer renders folder hierarchy, full-text index and Obsidian Bases withou
   assert.match(html, />Список</u);
   assert.match(html, /class="obsidian-base"/u);
   assert.match(html, /class="base-tab active"/u);
+  assert.match(html, /class="base-filter-toggle"/u);
+  assert.match(html, /data-total="2"/u);
+  assert.match(html, /data-property="amount" data-type="number"/u);
+  assert.match(html, /data-property="amount" data-type="number" data-value="30000"/u);
+  assert.match(html, /data-summary="Sum" data-property="amount"/u);
+  assert.match(html, /new URLSearchParams\(location\.search\)\.get\('bf'\)/u);
   assert.match(html, />30000</u);
   assert.match(html, />3000</u);
   assert.match(html, /Sum 33000/u);
