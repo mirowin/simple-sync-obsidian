@@ -54,7 +54,7 @@ done
 [[ "$INSTALL_DIR" == /* ]] || die "Каталог установки должен быть абсолютным"
 [[ "$INSTALL_DIR" =~ ^/[A-Za-z0-9._/-]+$ ]] || die "Каталог установки содержит недопустимые символы"
 [[ "$INSTALL_DIR" != "/" && "$INSTALL_DIR" != "/opt" && "$INSTALL_DIR" != "/usr" && "$INSTALL_DIR" != "/etc" ]] || die "Слишком широкий каталог установки"
-[[ -f "$SOURCE_DIR/docker-compose.yml" && -f "$SOURCE_DIR/server/server.mjs" ]] || die "Запускайте скрипт из распакованного или клонированного репозитория"
+[[ -f "$SOURCE_DIR/docker-compose.yml" && -f "$SOURCE_DIR/server/server.mjs" && -f "$SOURCE_DIR/server/viewer.mjs" ]] || die "Запускайте скрипт из распакованного или клонированного репозитория"
 
 read_config_value() {
   local key="$1"
@@ -153,6 +153,7 @@ install_files() {
   install -m 0644 "$SOURCE_DIR/server/package.json" "$INSTALL_DIR/server/package.json"
   install -m 0644 "$SOURCE_DIR/server/package-lock.json" "$INSTALL_DIR/server/package-lock.json"
   install -m 0644 "$SOURCE_DIR/server/server.mjs" "$INSTALL_DIR/server/server.mjs"
+  install -m 0644 "$SOURCE_DIR/server/viewer.mjs" "$INSTALL_DIR/server/viewer.mjs"
   install -m 0644 "$SOURCE_DIR/deploy/Caddyfile.example" "$INSTALL_DIR/examples/Caddyfile.example"
   install -m 0644 "$SOURCE_DIR/deploy/nginx.conf.example" "$INSTALL_DIR/examples/nginx.conf.example"
   install -m 0755 "$SOURCE_DIR/scripts/configure-vps.sh" /usr/local/sbin/simple-sync-config
