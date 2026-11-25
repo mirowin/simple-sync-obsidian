@@ -3,8 +3,7 @@ import { createServer } from "node:http";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { marked } from "marked";
-import sanitizeHtml from "sanitize-html";
+import { isViewerDocument, renderPublicationViewer } from "./viewer.mjs";
 
 const DATA_DIR = process.env.DATA_DIR || join(fileURLToPath(new URL(".", import.meta.url)), "data");
 const PORT = Number(process.env.PORT || 8787);
@@ -145,57 +144,23 @@ async function viewPublication(res, vaultId, requestedPath, url) {
   if (!publication) return sendHtml(res, 404, errorPage("Веб-копия ещё не опубликована"));
   const key = url.searchParams.get("key") || "";
   const keyHash = key ? digestBase64(key) : "";
-  const markdownFiles = publication.files.filter(file => file.kind === "markdown" && canView(file.path, publication.rules, keyHash));
+  const visibleFiles = publication.files.filter(file => canView(file.path, publication.rules, keyHash));
+  const documents = visibleFiles.filter(isViewerDocument);
   let path = requestedPath;
-  if (!path) path = markdownFiles[0]?.path || "";
-  const file = publication.files.find(item => item.path === path);
-  if (!file || !canView(file.path, publication.rules, keyHash)) return sendHtml(res, 404, errorPage("Страница не найдена или доступ закрыт"));
+  if (!path) path = documents[0]?.path || "";
+  const file = visibleFiles.find(item => item.path === path);
+  if (!file) return sendHtml(res, 404, errorPage("Страница не найдена или доступ закрыт"));
 
-  if (file.kind === "asset") {
+  if (!isViewerDocument(file)) {
     const data = Buffer.from(file.content, "base64");
     const contentType = mimeTypes[extname(file.path).toLowerCase()] || "application/octet-stream";
     res.writeHead(200, { "Content-Type": contentType, "Content-Length": data.length, "Cache-Control": "public, max-age=300" });
     return res.end(data);
   }
 
-  const markdown = prepareMarkdown(Buffer.from(file.content, "base64").toString("utf8"), file.path, publication.files);
-  const rendered = sanitizeHtml(marked.parse(markdown), {
-    allowedTags: sanitizeHtml.defaults.allowedTags.concat(["img", "details", "summary", "input", "mark"]),
-    allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, "*": ["id", "class"], a: ["href", "name", "target", "rel"], img: ["src", "alt", "title", "loading"], input: ["type", "checked", "disabled"] },
-    allowedSchemes: ["http", "https", "mailto", "data"],
-    allowProtocolRelative: false
-  });
-  const html = viewerPage(publication, file.path, rendered, markdownFiles, key, url);
+  const html = renderPublicationViewer({ publication, vaultId, currentPath: file.path, visibleFiles, key });
+  if (!html) return sendHtml(res, 404, errorPage("Страница не найдена или доступ закрыт"));
   sendHtml(res, 200, html);
-}
-
-function prepareMarkdown(markdown, currentPath, files) {
-  const withoutFrontmatter = markdown.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n/u, "");
-  return withoutFrontmatter.replace(/(!?)\[\[([^\]|#]+)(?:#([^\]|]+))?(?:\|([^\]]+))?\]\]/gu, (_match, embed, rawTarget, heading, alias) => {
-    const target = resolveWikiTarget(rawTarget.trim(), currentPath, files);
-    const label = (alias || rawTarget).trim();
-    const anchor = heading ? `#${heading.trim().toLowerCase().replace(/\s+/gu, "-")}` : "";
-    return embed ? `![${label}](${target})` : `[${label}](${target}${anchor})`;
-  });
-}
-
-function resolveWikiTarget(rawTarget, currentPath, files) {
-  const candidates = [];
-  const currentDir = currentPath.includes("/") ? currentPath.slice(0, currentPath.lastIndexOf("/") + 1) : "";
-  candidates.push(rawTarget, `${currentDir}${rawTarget}`);
-  if (!extname(rawTarget)) candidates.push(`${rawTarget}.md`, `${currentDir}${rawTarget}.md`);
-  for (const candidate of candidates) {
-    if (files.some(file => file.path === candidate)) return relativeViewerPath(currentPath, candidate);
-  }
-  const byName = files.find(file => file.path === rawTarget || file.path.endsWith(`/${rawTarget}`) || file.path.endsWith(`/${rawTarget}.md`));
-  return byName ? relativeViewerPath(currentPath, byName.path) : rawTarget;
-}
-
-function relativeViewerPath(currentPath, targetPath) {
-  const from = currentPath.split("/").slice(0, -1);
-  const to = targetPath.split("/");
-  while (from.length && to.length && from[0] === to[0]) { from.shift(); to.shift(); }
-  return `${"../".repeat(from.length)}${to.join("/")}`;
 }
 
 function canView(path, rules, keyHash) {
@@ -209,18 +174,6 @@ function canView(path, rules, keyHash) {
   return Boolean(keyHash && exact.some(rule => rule.mode === "link" && rule.keyHash && safeEqual(keyHash, rule.keyHash)));
 }
 
-function viewerPage(publication, currentPath, content, files, key, url) {
-  const query = key ? `?key=${encodeURIComponent(key)}` : "";
-  const items = files.map(file => `<a class="doc-link${file.path === currentPath ? " active" : ""}" data-title="${escapeHtml(file.path.toLowerCase())}" href="/view/${encodeURIComponent(url.pathname.split("/")[2])}/${encodePath(file.path)}${query}">${escapeHtml(file.path.replace(/\.md$/iu, ""))}</a>`).join("");
-  const title = currentPath.split("/").pop()?.replace(/\.md$/iu, "") || publication.siteTitle;
-  return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light dark"><title>${escapeHtml(title)} — ${escapeHtml(publication.siteTitle)}</title><style>${viewerCss}</style></head><body>
-  <header><button id="menu" aria-label="Открыть меню">☰</button><a class="brand" href="/view/${encodeURIComponent(url.pathname.split("/")[2])}/${query}">${escapeHtml(publication.siteTitle)}</a><button id="theme" aria-label="Сменить тему">◐</button></header>
-  <div class="layout"><aside id="sidebar"><input id="search" type="search" placeholder="Поиск заметки…" autocomplete="off"><nav>${items || "<p class=muted>Нет доступных заметок</p>"}</nav><p class="updated">Обновлено ${new Date(publication.updatedAt).toLocaleString("ru-RU")}</p></aside><main><article>${content}</article></main></div>
-  <script>${viewerJs}</script></body></html>`;
-}
-
-const viewerCss = `:root{--bg:#fff;--side:#f7f7f8;--text:#202124;--muted:#6b7280;--line:#e5e7eb;--accent:#6d5ce7;--code:#f2f3f5}html[data-theme=dark]{--bg:#171719;--side:#202024;--text:#e8e8ec;--muted:#a1a1aa;--line:#34343a;--accent:#a99cff;--code:#27272c}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.65 system-ui,-apple-system,Segoe UI,sans-serif}header{height:58px;display:flex;align-items:center;gap:14px;padding:0 18px;border-bottom:1px solid var(--line);position:fixed;inset:0 0 auto;z-index:3;background:color-mix(in srgb,var(--bg) 92%,transparent);backdrop-filter:blur(12px)}button{border:0;background:transparent;color:var(--text);font-size:22px;cursor:pointer}.brand{font-weight:700;color:var(--text);text-decoration:none;flex:1}.layout{display:grid;grid-template-columns:300px minmax(0,1fr);padding-top:58px;min-height:100vh}aside{position:fixed;top:58px;bottom:0;width:300px;padding:18px;background:var(--side);border-right:1px solid var(--line);overflow:auto}#search{width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:9px;background:var(--bg);color:var(--text);font:inherit}.doc-link{display:block;padding:8px 10px;margin:3px 0;border-radius:7px;color:var(--text);text-decoration:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.doc-link:hover,.doc-link.active{background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)}.updated,.muted{font-size:12px;color:var(--muted);margin-top:24px}main{grid-column:2;padding:44px clamp(22px,6vw,90px)}article{max-width:820px;margin:0 auto}h1,h2,h3{line-height:1.25;margin:1.6em 0 .65em}h1{font-size:2.35em}h2{font-size:1.65em;border-bottom:1px solid var(--line);padding-bottom:.3em}a{color:var(--accent)}img,video{max-width:100%;border-radius:8px}pre{overflow:auto;padding:16px;border-radius:9px;background:var(--code)}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--code);padding:.15em .35em;border-radius:4px}pre code{padding:0}blockquote{margin-left:0;padding-left:18px;border-left:4px solid var(--accent);color:var(--muted)}table{border-collapse:collapse;display:block;overflow:auto}th,td{border:1px solid var(--line);padding:8px 12px}#menu{display:none}@media(max-width:800px){.layout{display:block}aside{transform:translateX(-105%);transition:.2s;z-index:2;box-shadow:0 10px 30px #0004}aside.open{transform:none}#menu{display:block}main{padding:28px 18px}h1{font-size:1.9em}}`;
-const viewerJs = `(()=>{const root=document.documentElement,side=document.getElementById('sidebar');const saved=localStorage.getItem('viewer-theme');if(saved)root.dataset.theme=saved;document.getElementById('theme').onclick=()=>{const next=root.dataset.theme==='dark'?'light':'dark';root.dataset.theme=next;localStorage.setItem('viewer-theme',next)};document.getElementById('menu').onclick=()=>side.classList.toggle('open');document.getElementById('search').oninput=e=>{const q=e.target.value.toLowerCase();document.querySelectorAll('.doc-link').forEach(a=>a.hidden=!a.dataset.title.includes(q))};const key=new URLSearchParams(location.search).get('key');if(key){document.querySelectorAll('article a,article img').forEach(el=>{const attr=el.tagName==='IMG'?'src':'href',value=el.getAttribute(attr);if(value&&!/^(?:[a-z]+:|#|\/\/)/i.test(value)){const u=new URL(value,location.href);u.searchParams.set('key',key);el.setAttribute(attr,u.href)}})}})();`;
 
 function validatePublication(value) {
   if (!value || value.format !== 1 || typeof value.siteTitle !== "string" || !Array.isArray(value.rules) || !Array.isArray(value.files)) return "invalid shape";
