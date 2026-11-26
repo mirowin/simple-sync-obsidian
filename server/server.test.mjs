@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createHash } from "node:crypto";
+import { createHash, webcrypto } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +25,36 @@ test("health endpoint responds", async () => {
   const response = await fetch(`${base}/health`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { status: "ok" });
+});
+
+test("server home creates end-to-end encrypted sync channels", async () => {
+  const response = await fetch(`${base}/`);
+  assert.equal(response.status, 200);
+  const html = await response.text();
+  assert.match(html, /Создать канал/u);
+  assert.match(html, /simple-sync-vault:/u);
+  assert.match(html, /simple-sync-key:/u);
+  const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/gu)].map(match => match[1]);
+  for (const script of scripts) {
+    assert.doesNotThrow(() => new Script(script), "channel page must emit valid browser JavaScript");
+  }
+  const elements = Object.fromEntries(["create", "status", "result", "channel", "copy"].map(id => [id, { id, hidden: id === "result", disabled: false, textContent: "", value: "", select() {} }]));
+  let request = null;
+  const context = {
+    TextEncoder,
+    crypto: webcrypto,
+    btoa,
+    document: { getElementById: id => elements[id], execCommand() {} },
+    navigator: { clipboard: { async writeText() {} } },
+    fetch: async (url, options) => { request = { url, options }; return { ok: true, status: 201 }; },
+    setTimeout
+  };
+  new Script(scripts[0]).runInNewContext(context);
+  await elements.create.onclick();
+  assert.equal(elements.result.hidden, false);
+  assert.match(elements.channel.value, /^[A-Za-z0-9_-]{43}$/u);
+  assert.match(request.url, /^\/v1\/vaults\/[A-Za-z0-9_-]{24}$/u);
+  assert.match(request.options.headers.Authorization, /^Bearer [A-Za-z0-9+/]+={0,2}$/u);
 });
 
 test("vault, optimistic manifest and encrypted blob flow", async () => {

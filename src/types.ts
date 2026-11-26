@@ -10,6 +10,7 @@ export interface VaultManifest {
   format: 1;
   updatedAt: number;
   entries: Record<string, RemoteEntry>;
+  sharedSettings?: SharedSettingsEnvelope;
 }
 
 export interface LocalFile {
@@ -29,10 +30,26 @@ export interface SyncSettings {
   intervalSeconds: number;
   baseline: Record<string, string>;
   pairingCode: string;
+  channelId: string;
   publicationEnabled: boolean;
   siteTitle: string;
+  publicationFolders: string[];
   publicationRules: string;
   publicationFingerprint: string;
+  sharedSettingsUpdatedAt: number;
+}
+
+export interface SharedSettings {
+  publicationEnabled: boolean;
+  siteTitle: string;
+  publicationFolders: string[];
+  publicationRules: string;
+}
+
+export interface SharedSettingsEnvelope {
+  updatedAt: number;
+  updatedBy: string;
+  value: SharedSettings;
 }
 
 export interface PairingPayload {

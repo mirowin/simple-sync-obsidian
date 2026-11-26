@@ -14,3 +14,19 @@
 .simple-sync-danger {
   color: var(--text-error);
 }
+
+.simple-sync-folder-modal {
+  max-width: 42rem;
+}
+
+.simple-sync-folder-list {
+  max-height: min(60vh, 34rem);
+  margin: 1rem 0;
+  overflow: auto;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: var(--radius-m);
+}
+
+.simple-sync-folder-list .setting-item {
+  padding-right: 0.75rem;
+}
