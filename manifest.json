@@ -1,7 +1,7 @@
 {
   "id": "simple-encrypted-sync",
   "name": "Simple Encrypted Sync",
-  "version": "0.3.1",
+  "version": "0.4.0",
   "minAppVersion": "1.5.0",
   "description": "Sync an Obsidian vault between devices through a self-hosted, end-to-end encrypted server.",
   "author": "Nikita Shitikov",
