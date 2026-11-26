@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Script } from "node:vm";
 
 const dataDir = await mkdtemp(join(tmpdir(), "simple-sync-test-"));
 process.env.DATA_DIR = dataDir;
@@ -162,6 +163,9 @@ test("viewer renders folder hierarchy, full-text index and Obsidian Bases withou
   assert.match(html, /data-property="amount" data-type="number" data-value="30000"/u);
   assert.match(html, /data-summary="Sum" data-property="amount"/u);
   assert.match(html, /new URLSearchParams\(location\.search\)\.get\('bf'\)/u);
+  for (const match of html.matchAll(/<script>([\s\S]*?)<\/script>/gu)) {
+    assert.doesNotThrow(() => new Script(match[1]), "viewer must emit valid browser JavaScript");
+  }
   assert.match(html, />30000</u);
   assert.match(html, />3000</u);
   assert.match(html, /Sum 33000/u);
