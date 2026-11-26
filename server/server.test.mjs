@@ -120,19 +120,19 @@ test("viewer renders folder hierarchy, full-text index and Obsidian Bases withou
         path: "Public/Money/БД.base",
         kind: "asset",
         mtime: 11,
-        content: encode(`filters:\n  file.inFolder("Public/Money/Список")\nviews:\n  - type: table\n    name: Расходы\n    order:\n      - file.name\n      - amount\n      - Жене\n    summaries:\n      amount: Sum\n`)
+        content: encode(`filters:\n  file.inFolder("Public/Money/Список")\nviews:\n  - type: table\n    name: Крупные\n    filters:\n      and:\n        - amount >= 5000\n        - wife == false\n    order:\n      - file.name\n      - amount\n      - wife\n    summaries:\n      amount: Sum\n  - type: table\n    name: Жене\n    filters:\n      wife == true\n    order:\n      - file.name\n      - amount\n      - wife\n`)
       },
       {
         path: "Public/Money/Список/Еда.md",
         kind: "markdown",
         mtime: 12,
-        content: encode("---\namount: 30000\nЖене: false\n---\n# Еда\nОбычная покупка продуктов")
+        content: encode("---\namount: 30000\nwife: false\n---\n# Еда\nОбычная покупка продуктов")
       },
       {
         path: "Public/Money/Список/Кошка.md",
         kind: "markdown",
         mtime: 13,
-        content: encode("---\namount: 3000\nЖене: true\n---\n# Кошка\nКорм и наполнитель")
+        content: encode("---\namount: 3000\nwife: true\n---\n# Кошка\nКорм и наполнитель")
       },
       {
         path: "Public/Money/Список/Секрет.md",
@@ -158,7 +158,10 @@ test("viewer renders folder hierarchy, full-text index and Obsidian Bases withou
   assert.match(html, /class="obsidian-base"/u);
   assert.match(html, /class="base-tab active"/u);
   assert.match(html, /class="base-filter-toggle"/u);
-  assert.match(html, /data-total="2"/u);
+  assert.match(html, /data-total="1"/u);
+  assert.match(html, /data-filter-default="\{&quot;mode&quot;:&quot;and&quot;,&quot;conditions&quot;:\[/u);
+  assert.match(html, /&quot;column&quot;:&quot;amount&quot;,&quot;operator&quot;:&quot;gte&quot;,&quot;value&quot;:&quot;5000&quot;/u);
+  assert.match(html, /&quot;column&quot;:&quot;wife&quot;,&quot;operator&quot;:&quot;false&quot;/u);
   assert.match(html, /data-property="amount" data-type="number"/u);
   assert.match(html, /data-property="amount" data-type="number" data-value="30000"/u);
   assert.match(html, /data-summary="Sum" data-property="amount"/u);
@@ -169,6 +172,8 @@ test("viewer renders folder hierarchy, full-text index and Obsidian Bases withou
   assert.match(html, />30000</u);
   assert.match(html, />3000</u);
   assert.match(html, /Sum 33000/u);
+  assert.match(html, /Как в Obsidian/u);
+  assert.match(html, /Показать все/u);
   assert.match(html, /обычная покупка продуктов/u);
   assert.doesNotMatch(html, /НЕ ДОЛЖНО ПОПАСТЬ В HTML/u);
   assert.doesNotMatch(html, /999999/u);
