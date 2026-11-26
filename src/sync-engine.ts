@@ -2,6 +2,7 @@ import { App, normalizePath, TFile } from "obsidian";
 import { decryptBytes, decryptJson, encryptBytes, encryptJson, keyedSha256, sha256 } from "./crypto";
 import { conflictPath, decideMerge } from "./merge";
 import { ConflictError, RemoteClient } from "./remote";
+import { isSharedSettingsEnvelope, mergeSharedSettings } from "./shared-settings";
 import type { LocalFile, RemoteEntry, SyncSettings, VaultManifest } from "./types";
 
 export interface SyncSummary {
@@ -9,6 +10,7 @@ export interface SyncSummary {
   downloaded: number;
   deleted: number;
   conflicts: number;
+  settings: "none" | "uploaded" | "downloaded";
 }
 
 export class SyncEngine {
@@ -48,10 +50,16 @@ export class SyncEngine {
       : { format: 1, updatedAt: Date.now(), entries: {} };
     if (manifest.format !== 1 || !manifest.entries) throw new Error("Неподдерживаемый формат удалённого хранилища");
 
+    let remoteChanged = false;
+    const sharedMerge = mergeSharedSettings(settings, isSharedSettingsEnvelope(manifest.sharedSettings) ? manifest.sharedSettings : undefined);
+    if (sharedMerge.action === "upload") {
+      manifest.sharedSettings = sharedMerge.remote;
+      remoteChanged = true;
+    }
+
     const local = await this.readLocalFiles();
     const paths = new Set([...local.keys(), ...Object.keys(manifest.entries), ...Object.keys(settings.baseline)]);
-    const summary: SyncSummary = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0 };
-    let remoteChanged = false;
+    const summary: SyncSummary = { uploaded: 0, downloaded: 0, deleted: 0, conflicts: 0, settings: sharedMerge.action === "upload" ? "uploaded" : sharedMerge.action === "download" ? "downloaded" : "none" };
 
     for (const path of [...paths].sort()) {
       const localFile = local.get(path) ?? null;

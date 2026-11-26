@@ -65,6 +65,26 @@ export async function deriveAuthToken(keyBase64: string, vaultId: string): Promi
   return sha256(material.buffer);
 }
 
+export async function deriveChannelConnection(channelIdValue: string): Promise<{ vaultId: string; encryptionKey: string }> {
+  const channelId = normalizeChannelId(channelIdValue);
+  const vaultDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(`simple-sync-vault:${channelId}`)));
+  const keyDigest = new Uint8Array(await crypto.subtle.digest("SHA-256", encoder.encode(`simple-sync-key:${channelId}`)));
+  return {
+    vaultId: toBase64Url(vaultDigest.slice(0, 18)),
+    encryptionKey: bytesToBase64(keyDigest)
+  };
+}
+
+export function normalizeChannelId(value: string): string {
+  const normalized = value.trim().replaceAll("-", "+").replaceAll("_", "/");
+  const padded = normalized + "=".repeat((4 - normalized.length % 4) % 4);
+  let decoded: Uint8Array;
+  try { decoded = base64ToBytes(padded); }
+  catch { throw new Error("Некорректный ID канала"); }
+  if (decoded.length !== 32) throw new Error("ID канала должен быть создан в интерфейсе сервера");
+  return toBase64Url(decoded);
+}
+
 export function encodePairingCode(value: object): string {
   return bytesToBase64(encoder.encode(JSON.stringify(value))).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }
@@ -77,4 +97,8 @@ export function decodePairingCode<T>(value: string): T {
 
 function exactBuffer(bytes: Uint8Array): ArrayBuffer {
   return bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+}
+
+function toBase64Url(bytes: Uint8Array): string {
+  return bytesToBase64(bytes).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
 }

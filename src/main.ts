@@ -1,5 +1,5 @@
-import { Notice, Platform, Plugin, PluginSettingTab, Setting } from "obsidian";
-import { bytesToBase64, decodePairingCode, encodePairingCode, randomBase64, sha256 } from "./crypto";
+import { Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFolder } from "obsidian";
+import { bytesToBase64, decodePairingCode, deriveChannelConnection, encodePairingCode, normalizeChannelId, randomBase64, sha256 } from "./crypto";
 import { RemoteClient, normalizeServer } from "./remote";
 import { SyncEngine } from "./sync-engine";
 import type { PairingPayload, PublicationRule, PublicationSnapshot, SyncSettings } from "./types";
@@ -13,10 +13,13 @@ const DEFAULT_SETTINGS: SyncSettings = {
   intervalSeconds: 30,
   baseline: {},
   pairingCode: "",
+  channelId: "",
   publicationEnabled: true,
   siteTitle: "Мои заметки",
-  publicationRules: "public | Публичное",
-  publicationFingerprint: ""
+  publicationFolders: ["Публичное"],
+  publicationRules: "",
+  publicationFingerprint: "",
+  sharedSettingsUpdatedAt: 0
 };
 
 export default class SimpleEncryptedSyncPlugin extends Plugin {
@@ -60,13 +63,27 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
   async loadSettings(): Promise<void> {
     const loaded = await this.loadData() as Partial<SyncSettings> | null;
     this.settings = { ...DEFAULT_SETTINGS, ...(loaded ?? {}) };
+    if (!Array.isArray(loaded?.publicationFolders)) {
+      const migrated = migrateLegacyPublicationRules(this.settings.publicationRules);
+      this.settings.publicationFolders = migrated.folders.length ? migrated.folders : ["Публичное"];
+      this.settings.publicationRules = migrated.rules;
+    }
     if (!this.settings.deviceId) this.settings.deviceId = shortRandomId();
     if (!this.settings.deviceName) this.settings.deviceName = Platform.isMobileApp ? "Телефон" : "Компьютер";
+    if (loaded?.sharedSettingsUpdatedAt === undefined && this.settings.publicationEnabled && this.isConfigured()) {
+      this.settings.sharedSettingsUpdatedAt = Date.now();
+    }
     await this.saveData(this.settings);
   }
 
   async saveSettings(): Promise<void> {
     await this.saveData(this.settings);
+  }
+
+  async saveSharedSettings(): Promise<void> {
+    this.settings.sharedSettingsUpdatedAt = Date.now();
+    this.settings.publicationFingerprint = "";
+    await this.saveSettings();
   }
 
   isConfigured(): boolean {
@@ -92,7 +109,10 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
     try {
       const result = await this.engine.sync();
       if (result && this.settings.publicationEnabled) await this.publishSnapshot();
-      if (showNotice && result) new Notice(`Синхронизация завершена. Загружено: ${result.uploaded}, скачано: ${result.downloaded}, конфликтов: ${result.conflicts}`);
+      if (showNotice && result) {
+        const settingsText = result.settings === "downloaded" ? ", настройки получены" : result.settings === "uploaded" ? ", настройки отправлены" : "";
+        new Notice(`Синхронизация завершена. Загружено: ${result.uploaded}, скачано: ${result.downloaded}, конфликтов: ${result.conflicts}${settingsText}`);
+      }
     } catch (error) {
       if (showNotice) new Notice(error instanceof Error ? error.message : String(error), 8000);
     }
@@ -105,10 +125,12 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
   async publishSnapshot(force = false): Promise<void> {
     if (!this.isConfigured()) return;
     const parsed = await parsePublicationRules(this.settings.publicationRules);
+    const publicRules: PublicationRule[] = this.settings.publicationFolders.map(path => ({ path: normalizeRulePath(path), mode: "public" }));
+    const rules = deduplicateRules([...publicRules, ...parsed.rules]);
     const files: PublicationSnapshot["files"] = [];
     const fingerprints: string[] = [];
     for (const file of this.app.vault.getFiles()) {
-      const rule = matchingRule(file.path, parsed.rules);
+      const rule = matchingRule(file.path, rules);
       if (!rule || rule.mode === "private") continue;
       const data = await this.app.vault.readBinary(file);
       files.push({
@@ -119,14 +141,14 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
       });
       fingerprints.push(`${file.path}:${await sha256(data)}`);
     }
-    const fingerprintSource = new TextEncoder().encode(JSON.stringify({ title: this.settings.siteTitle, rules: parsed.rules, files: fingerprints.sort() }));
+    const fingerprintSource = new TextEncoder().encode(JSON.stringify({ title: this.settings.siteTitle, rules, files: fingerprints.sort() }));
     const fingerprint = await sha256(fingerprintSource.buffer);
     if (!force && fingerprint === this.settings.publicationFingerprint) return;
     const snapshot: PublicationSnapshot = {
       format: 1,
       siteTitle: this.settings.siteTitle.trim() || "Мои заметки",
       updatedAt: Date.now(),
-      rules: parsed.rules,
+      rules,
       files
     };
     const client = await RemoteClient.create(this.settings.serverUrl, this.settings.vaultId, this.settings.encryptionKey);
@@ -159,9 +181,11 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
     this.settings.vaultId = vaultId;
     this.settings.encryptionKey = encryptionKey;
     this.settings.pairingCode = encodePairingCode(payload);
+    this.settings.channelId = "";
     this.settings.baseline = {};
     this.settings.publicationEnabled = true;
     this.settings.publicationFingerprint = "";
+    this.settings.sharedSettingsUpdatedAt = Date.now();
     await this.saveSettings();
     this.restartTimer();
     this.setStatus("Хранилище создано");
@@ -178,12 +202,35 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
     this.settings.vaultId = payload.vaultId;
     this.settings.encryptionKey = payload.encryptionKey;
     this.settings.pairingCode = code.trim();
+    this.settings.channelId = "";
     this.settings.baseline = {};
     this.settings.publicationEnabled = false;
     this.settings.publicationFingerprint = "";
+    this.settings.sharedSettingsUpdatedAt = 0;
     await this.saveSettings();
     this.restartTimer();
     this.setStatus("Устройство подключено");
+    await this.runSync(false);
+  }
+
+  async connectToChannel(serverValue: string, channelValue: string): Promise<void> {
+    const serverUrl = normalizeServer(serverValue);
+    const channelId = normalizeChannelId(channelValue);
+    const connection = await deriveChannelConnection(channelId);
+    const client = await RemoteClient.create(serverUrl, connection.vaultId, connection.encryptionKey);
+    await client.ping();
+    const remote = await client.getManifest();
+    this.settings.serverUrl = serverUrl;
+    this.settings.vaultId = connection.vaultId;
+    this.settings.encryptionKey = connection.encryptionKey;
+    this.settings.channelId = channelId;
+    this.settings.pairingCode = "";
+    this.settings.baseline = {};
+    this.settings.publicationFingerprint = "";
+    this.settings.sharedSettingsUpdatedAt = remote.payload ? 0 : Date.now();
+    await this.saveSettings();
+    this.restartTimer();
+    this.setStatus("Канал подключён");
     await this.runSync(false);
   }
 
@@ -194,6 +241,7 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
       vaultId: "",
       encryptionKey: "",
       pairingCode: "",
+      channelId: "",
       baseline: {}
     };
     await this.saveSettings();
@@ -203,6 +251,7 @@ export default class SimpleEncryptedSyncPlugin extends Plugin {
 
 class SyncSettingTab extends PluginSettingTab {
   private serverDraft = "";
+  private channelDraft = "";
   private codeDraft = "";
 
   constructor(private readonly plugin: SimpleEncryptedSyncPlugin) {
@@ -234,22 +283,29 @@ class SyncSettingTab extends PluginSettingTab {
         .setDesc("Основное зашифрованное хранилище при этом остаётся закрытым")
         .addToggle(toggle => toggle.setValue(this.plugin.settings.publicationEnabled).onChange(async value => {
           this.plugin.settings.publicationEnabled = value;
-          await this.plugin.saveSettings();
+          await this.plugin.saveSharedSettings();
         }));
       new Setting(containerEl)
         .setName("Название сайта")
         .addText(text => text.setValue(this.plugin.settings.siteTitle).onChange(async value => {
           this.plugin.settings.siteTitle = value;
-          await this.plugin.saveSettings();
+          await this.plugin.saveSharedSettings();
+        }));
+
+      new Setting(containerEl)
+        .setName("Папки для публичного просмотра")
+        .setDesc(publicationFoldersDescription(this.plugin.settings.publicationFolders))
+        .addButton(button => button.setButtonText("Выбрать папки").setCta().onClick(() => {
+          new PublicationFoldersModal(this.plugin, () => this.display()).open();
         }));
 
       const rules = new Setting(containerEl)
-        .setName("Правила просмотра")
-        .setDesc("Формат: public | Папка; link | Папка | секрет; private | Папка/Файл.md. Повторите link для каждого человека; удалите строку, чтобы отозвать его доступ")
+        .setName("Дополнительные правила доступа")
+        .setDesc("Необязательно. Формат: link | Папка | секрет или private | Папка/Файл.md. Публичные папки выбираются кнопкой выше")
         .setClass("simple-sync-code");
       rules.addTextArea(area => area.setValue(this.plugin.settings.publicationRules).onChange(async value => {
         this.plugin.settings.publicationRules = value;
-        await this.plugin.saveSettings();
+        await this.plugin.saveSharedSettings();
       }));
 
       new Setting(containerEl)
@@ -292,14 +348,15 @@ class SyncSettingTab extends PluginSettingTab {
           await this.plugin.runSync(true);
         }));
 
+      const connectionSecret = this.plugin.settings.channelId || this.plugin.settings.pairingCode;
       const pair = new Setting(containerEl)
-        .setName("Код подключения второго устройства")
-        .setDesc("Это секретный код: не публикуйте его и не отправляйте посторонним")
+        .setName(this.plugin.settings.channelId ? "ID канала синхронизации" : "Старый код подключения")
+        .setDesc("Это секрет: любой, кто его получит, сможет подключиться к зашифрованному хранилищу")
         .setClass("simple-sync-code");
-      pair.addTextArea(area => area.setValue(this.plugin.settings.pairingCode).setDisabled(true));
+      pair.addTextArea(area => area.setValue(connectionSecret).setDisabled(true));
       pair.addButton(button => button.setButtonText("Копировать").onClick(async () => {
-        await navigator.clipboard.writeText(this.plugin.settings.pairingCode);
-        new Notice("Код подключения скопирован");
+        await navigator.clipboard.writeText(connectionSecret);
+        new Notice(this.plugin.settings.channelId ? "ID канала скопирован" : "Код подключения скопирован");
       }));
 
       new Setting(containerEl)
@@ -312,19 +369,20 @@ class SyncSettingTab extends PluginSettingTab {
       return;
     }
 
-    containerEl.createEl("h3", { text: "Создать новое хранилище" });
+    containerEl.createEl("h3", { text: "Подключиться к каналу синхронизации" });
     new Setting(containerEl)
       .setName("Адрес сервера")
-      .setDesc("Например: https://sync.example.ru")
+      .setDesc("Откройте этот адрес в браузере, создайте канал и скопируйте его ID")
       .addText(text => text.setPlaceholder("https://sync.example.ru").setValue(this.serverDraft).onChange(value => { this.serverDraft = value; }));
     new Setting(containerEl)
-      .setName("Первое устройство")
-      .setDesc("Создаст зашифрованное хранилище и код подключения")
-      .addButton(button => button.setButtonText("Создать").setCta().onClick(async () => {
+      .setName("ID канала")
+      .setDesc("Один и тот же секретный ID вводится на компьютере и телефоне")
+      .addTextArea(area => area.setPlaceholder("Вставьте ID канала").setValue(this.channelDraft).onChange(value => { this.channelDraft = value; }))
+      .addButton(button => button.setButtonText("Подключить").setCta().onClick(async () => {
         button.setDisabled(true);
         try {
-          await this.plugin.createRemoteVault(this.serverDraft);
-          new Notice("Хранилище создано");
+          await this.plugin.connectToChannel(this.serverDraft, this.channelDraft);
+          new Notice("Канал подключён");
           this.display();
         } catch (error) {
           new Notice(error instanceof Error ? error.message : String(error), 8000);
@@ -333,7 +391,7 @@ class SyncSettingTab extends PluginSettingTab {
         }
       }));
 
-    containerEl.createEl("h3", { text: "Подключить второе устройство" });
+    containerEl.createEl("h3", { text: "Совместимость со старыми версиями" });
     const join = new Setting(containerEl)
       .setName("Код подключения")
       .setDesc("Скопируйте код с уже настроенного устройства")
@@ -354,8 +412,88 @@ class SyncSettingTab extends PluginSettingTab {
   }
 }
 
+class PublicationFoldersModal extends Modal {
+  private readonly selected: Set<string>;
+
+  constructor(private readonly syncPlugin: SimpleEncryptedSyncPlugin, private readonly onSaved: () => void) {
+    super(syncPlugin.app);
+    this.selected = new Set(syncPlugin.settings.publicationFolders);
+  }
+
+  onOpen(): void {
+    const { contentEl } = this;
+    contentEl.empty();
+    contentEl.addClass("simple-sync-folder-modal");
+    contentEl.createEl("h2", { text: "Папки для публикации" });
+    contentEl.createEl("p", { text: "Выбранная папка публикуется вместе со всеми подпапками. Закрытые исключения можно добавить в дополнительных правилах.", cls: "setting-item-description" });
+
+    const folders = this.syncPlugin.app.vault.getAllLoadedFiles()
+      .filter((item): item is TFolder => item instanceof TFolder && item.path !== ".obsidian" && !item.path.startsWith(".obsidian/"))
+      .sort((left, right) => left.path.localeCompare(right.path, "ru", { numeric: true }));
+    const list = contentEl.createDiv({ cls: "simple-sync-folder-list" });
+    this.addFolderToggle(list, "", "Весь vault", 0);
+    for (const folder of folders) {
+      const depth = folder.path.split("/").length - 1;
+      this.addFolderToggle(list, folder.path, folder.name, depth);
+    }
+
+    const actions = contentEl.createDiv({ cls: "modal-button-container" });
+    const cancel = actions.createEl("button", { text: "Отмена" });
+    cancel.addEventListener("click", () => this.close());
+    const save = actions.createEl("button", { text: "Сохранить", cls: "mod-cta" });
+    save.addEventListener("click", () => {
+      void (async () => {
+        this.syncPlugin.settings.publicationFolders = [...this.selected].sort((a, b) => a.localeCompare(b, "ru", { numeric: true }));
+        await this.syncPlugin.saveSharedSettings();
+        this.close();
+        this.onSaved();
+        new Notice("Папки публикации сохранены и будут синхронизированы");
+      })();
+    });
+  }
+
+  onClose(): void {
+    this.contentEl.empty();
+  }
+
+  private addFolderToggle(container: HTMLElement, path: string, label: string, depth: number): void {
+    const setting = new Setting(container)
+      .setName(label)
+      .setDesc(path || "Публиковать все доступные файлы")
+      .addToggle(toggle => toggle.setValue(this.selected.has(path)).onChange(value => {
+        if (value) this.selected.add(path);
+        else this.selected.delete(path);
+      }));
+    setting.settingEl.style.paddingLeft = `${Math.min(depth, 6) * 18 + 8}px`;
+  }
+}
+
 function shortRandomId(size = 9): string {
   return randomBase64(size).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/u, "");
+}
+
+function publicationFoldersDescription(folders: string[]): string {
+  if (!folders.length) return "Публичные папки не выбраны";
+  if (folders.includes("")) return "Выбран весь vault";
+  const preview = folders.slice(0, 3).join(", ");
+  return folders.length > 3 ? `${preview} и ещё ${folders.length - 3}` : preview;
+}
+
+function migrateLegacyPublicationRules(source: string): { folders: string[]; rules: string } {
+  const folders: string[] = [];
+  const remaining: string[] = [];
+  for (const raw of String(source || "").split(/\r?\n/u)) {
+    const parts = raw.split("|").map(value => value.trim());
+    if (parts[0] === "public") folders.push(normalizeRulePath(parts[1] ?? ""));
+    else if (raw.trim()) remaining.push(raw);
+  }
+  return { folders: [...new Set(folders)], rules: remaining.join("\n") };
+}
+
+function deduplicateRules(rules: PublicationRule[]): PublicationRule[] {
+  const result = new Map<string, PublicationRule>();
+  for (const rule of rules) result.set(`${rule.mode}:${rule.path}:${rule.keyHash || ""}`, rule);
+  return [...result.values()];
 }
 
 async function parsePublicationRules(source: string): Promise<{ rules: PublicationRule[] }> {
