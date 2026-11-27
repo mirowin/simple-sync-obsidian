@@ -1,4 +1,4 @@
-import { Modal, Notice, Platform, Plugin, PluginSettingTab, Setting, TFolder } from "obsidian";
+import { Modal, normalizePath, Notice, Platform, Plugin, PluginSettingTab, Setting, TFolder, type SettingDefinitionItem, type SettingDefinitionRender } from "obsidian";
 import { bytesToBase64, decodePairingCode, deriveChannelConnection, encodePairingCode, normalizeChannelId, randomBase64, sha256 } from "./crypto";
 import { RemoteClient, normalizeServer } from "./remote";
 import { SyncEngine } from "./sync-engine";
@@ -259,157 +259,174 @@ class SyncSettingTab extends PluginSettingTab {
     this.serverDraft = plugin.settings.serverUrl;
   }
 
-  display(): void {
-    const { containerEl } = this;
-    containerEl.empty();
-    containerEl.createEl("h2", { text: "Simple Encrypted Sync" });
-
+  getSettingDefinitions(): SettingDefinitionItem[] {
     const status = this.plugin.getStatus();
-    const statusEl = containerEl.createDiv({ cls: "simple-sync-status", text: status.text });
-    statusEl.toggleClass("simple-sync-danger", status.error);
+    const statusDefinition = renderSetting("Состояние синхронизации", status.text, setting => {
+      setting.setClass("simple-sync-status");
+      setting.settingEl.toggleClass("simple-sync-danger", status.error);
+    });
 
-    if (this.plugin.isConfigured()) {
-      new Setting(containerEl)
-        .setName("Имя этого устройства")
-        .setDesc("Используется в названиях conflict-копий")
-        .addText(text => text.setValue(this.plugin.settings.deviceName).onChange(async value => {
-          this.plugin.settings.deviceName = value.trim() || (Platform.isMobileApp ? "Телефон" : "Компьютер");
-          await this.plugin.saveSettings();
-        }));
-
-      containerEl.createEl("h3", { text: "Веб-просмотрщик (только чтение)" });
-      new Setting(containerEl)
-        .setName("Публиковать выбранные заметки")
-        .setDesc("Основное зашифрованное хранилище при этом остаётся закрытым")
-        .addToggle(toggle => toggle.setValue(this.plugin.settings.publicationEnabled).onChange(async value => {
-          this.plugin.settings.publicationEnabled = value;
-          await this.plugin.saveSharedSettings();
-        }));
-      new Setting(containerEl)
-        .setName("Название сайта")
-        .addText(text => text.setValue(this.plugin.settings.siteTitle).onChange(async value => {
-          this.plugin.settings.siteTitle = value;
-          await this.plugin.saveSharedSettings();
-        }));
-
-      new Setting(containerEl)
-        .setName("Папки для публичного просмотра")
-        .setDesc(publicationFoldersDescription(this.plugin.settings.publicationFolders))
-        .addButton(button => button.setButtonText("Выбрать папки").setCta().onClick(() => {
-          new PublicationFoldersModal(this.plugin, () => this.display()).open();
-        }));
-
-      const rules = new Setting(containerEl)
-        .setName("Дополнительные правила доступа")
-        .setDesc("Необязательно. Формат: link | Папка | секрет или private | Папка/Файл.md. Публичные папки выбираются кнопкой выше")
-        .setClass("simple-sync-code");
-      rules.addTextArea(area => area.setValue(this.plugin.settings.publicationRules).onChange(async value => {
-        this.plugin.settings.publicationRules = value;
-        await this.plugin.saveSharedSettings();
-      }));
-
-      new Setting(containerEl)
-        .setName("Адрес просмотрщика")
-        .setDesc(this.plugin.getViewerUrl())
-        .addButton(button => button.setButtonText("Открыть").onClick(() => { window.open(this.plugin.getViewerUrl()); }))
-        .addButton(button => button.setButtonText("Копировать").onClick(async () => {
-          await navigator.clipboard.writeText(this.plugin.getViewerUrl());
-          new Notice("Ссылка скопирована");
-        }));
-
-      new Setting(containerEl)
-        .setName("Обновить веб-копию")
-        .setDesc("Для закрытой папки добавьте к адресу ?key=ваш-секрет")
-        .addButton(button => button.setButtonText("Опубликовать").setCta().onClick(async () => {
-          button.setDisabled(true);
-          try {
-            await this.plugin.publishSnapshot(true);
-            new Notice("Веб-копия обновлена");
-          } catch (error) {
-            new Notice(error instanceof Error ? error.message : String(error), 8000);
-          } finally {
-            button.setDisabled(false);
-          }
-        }));
-
-      new Setting(containerEl)
-        .setName("Интервал синхронизации")
-        .setDesc("Не реже 10 секунд")
-        .addText(text => text.setValue(String(this.plugin.settings.intervalSeconds)).onChange(async value => {
-          const parsed = Number(value);
-          if (Number.isFinite(parsed)) this.plugin.settings.intervalSeconds = Math.max(10, Math.round(parsed));
-          await this.plugin.saveSettings();
-          this.plugin.restartTimer();
-        }));
-
-      new Setting(containerEl)
-        .setName("Синхронизировать сейчас")
-        .addButton(button => button.setButtonText("Запустить").setCta().onClick(async () => {
-          await this.plugin.runSync(true);
-        }));
-
-      const connectionSecret = this.plugin.settings.channelId || this.plugin.settings.pairingCode;
-      const pair = new Setting(containerEl)
-        .setName(this.plugin.settings.channelId ? "ID канала синхронизации" : "Старый код подключения")
-        .setDesc("Это секрет: любой, кто его получит, сможет подключиться к зашифрованному хранилищу")
-        .setClass("simple-sync-code");
-      pair.addTextArea(area => area.setValue(connectionSecret).setDisabled(true));
-      pair.addButton(button => button.setButtonText("Копировать").onClick(async () => {
-        await navigator.clipboard.writeText(connectionSecret);
-        new Notice(this.plugin.settings.channelId ? "ID канала скопирован" : "Код подключения скопирован");
-      }));
-
-      new Setting(containerEl)
-        .setName("Отключить это устройство")
-        .setDesc("Локальные заметки останутся на месте")
-        .addButton(button => button.setButtonText("Отключить").setWarning().onClick(async () => {
-          await this.plugin.disconnect();
-          this.display();
-        }));
-      return;
+    if (!this.plugin.isConfigured()) {
+      return [
+        { type: "group", heading: "Simple Encrypted Sync", items: [statusDefinition] },
+        {
+          type: "group",
+          heading: "Подключиться к каналу синхронизации",
+          items: [
+            renderSetting("Адрес сервера", "Откройте этот адрес в браузере, создайте канал и скопируйте его ID", setting => {
+              setting.addText(text => text.setPlaceholder("https://sync.example.ru").setValue(this.serverDraft).onChange(value => { this.serverDraft = value; }));
+            }),
+            renderSetting("ID канала", "Один и тот же секретный ID вводится на компьютере и телефоне", setting => {
+              setting.addTextArea(area => area.setPlaceholder("Вставьте ID канала").setValue(this.channelDraft).onChange(value => { this.channelDraft = value; }))
+                .addButton(button => button.setButtonText("Подключить").setCta().onClick(async () => {
+                  button.setDisabled(true);
+                  try {
+                    await this.plugin.connectToChannel(this.serverDraft, this.channelDraft);
+                    new Notice("Канал подключён");
+                    this.update();
+                  } catch (error) {
+                    new Notice(error instanceof Error ? error.message : String(error), 8000);
+                  } finally {
+                    button.setDisabled(false);
+                  }
+                }));
+            })
+          ]
+        },
+        {
+          type: "group",
+          heading: "Совместимость со старыми версиями",
+          items: [renderSetting("Код подключения", "Скопируйте код с уже настроенного устройства", setting => {
+            setting.setClass("simple-sync-code")
+              .addTextArea(area => area.setPlaceholder("Вставьте код").setValue(this.codeDraft).onChange(value => { this.codeDraft = value; }))
+              .addButton(button => button.setButtonText("Подключить").setCta().onClick(async () => {
+                button.setDisabled(true);
+                try {
+                  await this.plugin.joinWithCode(this.codeDraft);
+                  new Notice("Устройство подключено");
+                  this.update();
+                } catch (error) {
+                  new Notice(error instanceof Error ? error.message : String(error), 8000);
+                } finally {
+                  button.setDisabled(false);
+                }
+              }));
+          })]
+        }
+      ];
     }
 
-    containerEl.createEl("h3", { text: "Подключиться к каналу синхронизации" });
-    new Setting(containerEl)
-      .setName("Адрес сервера")
-      .setDesc("Откройте этот адрес в браузере, создайте канал и скопируйте его ID")
-      .addText(text => text.setPlaceholder("https://sync.example.ru").setValue(this.serverDraft).onChange(value => { this.serverDraft = value; }));
-    new Setting(containerEl)
-      .setName("ID канала")
-      .setDesc("Один и тот же секретный ID вводится на компьютере и телефоне")
-      .addTextArea(area => area.setPlaceholder("Вставьте ID канала").setValue(this.channelDraft).onChange(value => { this.channelDraft = value; }))
-      .addButton(button => button.setButtonText("Подключить").setCta().onClick(async () => {
-        button.setDisabled(true);
-        try {
-          await this.plugin.connectToChannel(this.serverDraft, this.channelDraft);
-          new Notice("Канал подключён");
-          this.display();
-        } catch (error) {
-          new Notice(error instanceof Error ? error.message : String(error), 8000);
-        } finally {
-          button.setDisabled(false);
-        }
-      }));
-
-    containerEl.createEl("h3", { text: "Совместимость со старыми версиями" });
-    const join = new Setting(containerEl)
-      .setName("Код подключения")
-      .setDesc("Скопируйте код с уже настроенного устройства")
-      .setClass("simple-sync-code");
-    join.addTextArea(area => area.setPlaceholder("Вставьте код").setValue(this.codeDraft).onChange(value => { this.codeDraft = value; }));
-    join.addButton(button => button.setButtonText("Подключить").setCta().onClick(async () => {
-      button.setDisabled(true);
-      try {
-        await this.plugin.joinWithCode(this.codeDraft);
-        new Notice("Устройство подключено");
-        this.display();
-      } catch (error) {
-        new Notice(error instanceof Error ? error.message : String(error), 8000);
-      } finally {
-        button.setDisabled(false);
+    const connectionSecret = this.plugin.settings.channelId || this.plugin.settings.pairingCode;
+    return [
+      {
+        type: "group",
+        heading: "Simple Encrypted Sync",
+        items: [
+          statusDefinition,
+          renderSetting("Имя этого устройства", "Используется в названиях conflict-копий", setting => {
+            setting.addText(text => text.setValue(this.plugin.settings.deviceName).onChange(async value => {
+              this.plugin.settings.deviceName = value.trim() || (Platform.isMobileApp ? "Телефон" : "Компьютер");
+              await this.plugin.saveSettings();
+            }));
+          })
+        ]
+      },
+      {
+        type: "group",
+        heading: "Веб-просмотрщик (только чтение)",
+        items: [
+          renderSetting("Публиковать выбранные заметки", "Основное зашифрованное хранилище при этом остаётся закрытым", setting => {
+            setting.addToggle(toggle => toggle.setValue(this.plugin.settings.publicationEnabled).onChange(async value => {
+              this.plugin.settings.publicationEnabled = value;
+              await this.plugin.saveSharedSettings();
+            }));
+          }),
+          renderSetting("Название сайта", undefined, setting => {
+            setting.addText(text => text.setValue(this.plugin.settings.siteTitle).onChange(async value => {
+              this.plugin.settings.siteTitle = value;
+              await this.plugin.saveSharedSettings();
+            }));
+          }),
+          renderSetting("Папки для публичного просмотра", publicationFoldersDescription(this.plugin.settings.publicationFolders), setting => {
+            setting.addButton(button => button.setButtonText("Выбрать папки").setCta().onClick(() => {
+              new PublicationFoldersModal(this.plugin, () => this.update()).open();
+            }));
+          }),
+          renderSetting("Дополнительные правила доступа", "Необязательно. Формат: link | Папка | секрет или private | Папка/Файл.md. Публичные папки выбираются кнопкой выше", setting => {
+            setting.setClass("simple-sync-code").addTextArea(area => area.setValue(this.plugin.settings.publicationRules).onChange(async value => {
+              this.plugin.settings.publicationRules = value;
+              await this.plugin.saveSharedSettings();
+            }));
+          }),
+          renderSetting("Адрес просмотрщика", this.plugin.getViewerUrl(), setting => {
+            setting.addButton(button => button.setButtonText("Открыть").onClick(() => { window.open(this.plugin.getViewerUrl()); }))
+              .addButton(button => button.setButtonText("Копировать").onClick(async () => {
+                await navigator.clipboard.writeText(this.plugin.getViewerUrl());
+                new Notice("Ссылка скопирована");
+              }));
+          }),
+          renderSetting("Обновить веб-копию", "Для закрытой папки добавьте к адресу ?key=ваш-секрет", setting => {
+            setting.addButton(button => button.setButtonText("Опубликовать").setCta().onClick(async () => {
+              button.setDisabled(true);
+              try {
+                await this.plugin.publishSnapshot(true);
+                new Notice("Веб-копия обновлена");
+              } catch (error) {
+                new Notice(error instanceof Error ? error.message : String(error), 8000);
+              } finally {
+                button.setDisabled(false);
+              }
+            }));
+          })
+        ]
+      },
+      {
+        type: "group",
+        heading: "Синхронизация",
+        items: [
+          renderSetting("Интервал синхронизации", "Не реже 10 секунд", setting => {
+            setting.addText(text => text.setValue(String(this.plugin.settings.intervalSeconds)).onChange(async value => {
+              const parsed = Number(value);
+              if (Number.isFinite(parsed)) this.plugin.settings.intervalSeconds = Math.max(10, Math.round(parsed));
+              await this.plugin.saveSettings();
+              this.plugin.restartTimer();
+            }));
+          }),
+          renderSetting("Синхронизировать сейчас", undefined, setting => {
+            setting.addButton(button => button.setButtonText("Запустить").setCta().onClick(async () => {
+              await this.plugin.runSync(true);
+            }));
+          }),
+          renderSetting(this.plugin.settings.channelId ? "ID канала синхронизации" : "Старый код подключения", "Это секрет: любой, кто его получит, сможет подключиться к зашифрованному хранилищу", setting => {
+            setting.setClass("simple-sync-code")
+              .addTextArea(area => area.setValue(connectionSecret).setDisabled(true))
+              .addButton(button => button.setButtonText("Копировать").onClick(async () => {
+                await navigator.clipboard.writeText(connectionSecret);
+                new Notice(this.plugin.settings.channelId ? "ID канала скопирован" : "Код подключения скопирован");
+              }));
+          }),
+          renderSetting("Отключить это устройство", "Локальные заметки останутся на месте", setting => {
+            setting.addButton(button => button.setButtonText("Отключить").setDestructive().onClick(async () => {
+              await this.plugin.disconnect();
+              this.update();
+            }));
+          })
+        ]
       }
-    }));
+    ];
   }
+}
+
+function renderSetting(name: string, desc: string | undefined, render: (setting: Setting) => void): SettingDefinitionRender {
+  return {
+    name,
+    ...(desc === undefined ? {} : { desc }),
+    render: setting => {
+      setting.setName(name);
+      if (desc !== undefined) setting.setDesc(desc);
+      render(setting);
+    }
+  };
 }
 
 class PublicationFoldersModal extends Modal {
@@ -424,11 +441,12 @@ class PublicationFoldersModal extends Modal {
     const { contentEl } = this;
     contentEl.empty();
     contentEl.addClass("simple-sync-folder-modal");
-    contentEl.createEl("h2", { text: "Папки для публикации" });
+    new Setting(contentEl).setName("Папки для публикации").setHeading();
     contentEl.createEl("p", { text: "Выбранная папка публикуется вместе со всеми подпапками. Закрытые исключения можно добавить в дополнительных правилах.", cls: "setting-item-description" });
 
+    const configDir = normalizePath(this.syncPlugin.app.vault.configDir);
     const folders = this.syncPlugin.app.vault.getAllLoadedFiles()
-      .filter((item): item is TFolder => item instanceof TFolder && item.path !== ".obsidian" && !item.path.startsWith(".obsidian/"))
+      .filter((item): item is TFolder => item instanceof TFolder && item.path !== configDir && !item.path.startsWith(`${configDir}/`))
       .sort((left, right) => left.path.localeCompare(right.path, "ru", { numeric: true }));
     const list = contentEl.createDiv({ cls: "simple-sync-folder-list" });
     this.addFolderToggle(list, "", "Весь vault", 0);
