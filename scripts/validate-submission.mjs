@@ -21,6 +21,8 @@ if (!(manifest.version in versions)) errors.push("versions.json must contain the
 if (typeof manifest.minAppVersion !== "string" || !/^\d+\.\d+\.\d+$/u.test(manifest.minAppVersion)) errors.push("minAppVersion must use x.y.z format");
 if (typeof manifest.description !== "string" || manifest.description.length > 250) errors.push("description must be at most 250 characters");
 if (typeof manifest.description === "string" && !manifest.description.endsWith(".")) errors.push("description must end with a period");
+if (/\bobsidian\b/iu.test(manifest.description ?? "")) errors.push("description must not contain the redundant word 'Obsidian'");
+if (versions[manifest.version] !== manifest.minAppVersion) errors.push("versions.json must map the current version to manifest.minAppVersion");
 if (typeof manifest.name !== "string" || !manifest.name.trim()) errors.push("manifest.name is required");
 if (typeof manifest.author !== "string" || !manifest.author.trim()) errors.push("manifest.author is required");
 if (manifest.isDesktopOnly !== false) errors.push("isDesktopOnly must remain false for Android support");

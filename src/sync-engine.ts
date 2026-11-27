@@ -133,8 +133,9 @@ export class SyncEngine {
 
   private async readLocalFiles(): Promise<Map<string, LocalFile>> {
     const result = new Map<string, LocalFile>();
+    const configDir = normalizePath(this.app.vault.configDir);
     for (const file of this.app.vault.getFiles()) {
-      if (file.path.startsWith(".obsidian/")) continue;
+      if (file.path === configDir || file.path.startsWith(`${configDir}/`)) continue;
       const data = await this.app.vault.readBinary(file);
       result.set(file.path, {
         path: file.path,
@@ -173,7 +174,7 @@ export class SyncEngine {
 
   private async deleteLocal(path: string): Promise<void> {
     const existing = this.app.vault.getAbstractFileByPath(path);
-    if (existing instanceof TFile) await this.app.vault.delete(existing, true);
+    if (existing instanceof TFile) await this.app.fileManager.trashFile(existing);
   }
 
   private async ensureParent(path: string): Promise<void> {
